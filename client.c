@@ -9,7 +9,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define N_REQUESTS 1
+#define N_REQUESTS 10
 
 void tcperror(char *s){
     fprintf(stderr, "tcp error: %s\n", s);
