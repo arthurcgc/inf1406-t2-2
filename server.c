@@ -21,6 +21,7 @@
 #include <arpa/inet.h>
 
 #define FD_SIZE 10
+#define SOCKET_TIMEOUT 15
 
 void notReady(int *sock, char response[64]) {
     strcpy(response, "not ready\n");
@@ -36,7 +37,7 @@ void notReady(int *sock, char response[64]) {
     return;
 }
 
-void doNextChunk(int *sock, int fn) {
+void doNextChunk(int *sock, int fn, struct timeval socketTime) {
     FILE *fp;
     char buffer[64];
     char filepath[100];
@@ -49,6 +50,12 @@ void doNextChunk(int *sock, int fn) {
     }
     
     for(;;){
+        struct timeval checkTime;
+        gettimeofday(&checkTime, NULL);
+        if (checkTime.tv_sec - socketTime.tv_sec > SOCKET_TIMEOUT){
+            printf("DEBUG: socket timeout, closing connection\n");
+            return;
+        }
         bzero(buffer, sizeof(char)*64);
         if (fgets(buffer, 64, fp) == NULL) {
             return;
@@ -71,7 +78,6 @@ void doNextChunk(int *sock, int fn) {
             }
         }
         else {
-            close(*sock);
             return;
         }
     }
@@ -79,7 +85,7 @@ void doNextChunk(int *sock, int fn) {
     return;
 }
 
-void start(int *sock, char response[64], int fn) {
+void start(int *sock, char response[64], int fn, struct timeval socketTime) {
     strcpy(response, "ready\n");
     /*
     * Send the message back to the client.
@@ -90,15 +96,15 @@ void start(int *sock, char response[64], int fn) {
         exit(8);
     }
 
-    doNextChunk(sock, fn);    
+    doNextChunk(sock, fn, socketTime);    
 }
 
-void respond(char *requestBody, char response[64], int *sock, fd_set *master){
+void respond(char *requestBody, char response[64], int *sock, fd_set *master, struct timeval socketTime){
     if (strlen(requestBody) == 1 || strlen(requestBody) == 2){
         int n = atoi(requestBody);
         if (n >= 0 && n <= 9)
         {
-            start(sock, response, n);
+            start(sock, response, n, socketTime);
             return;
         }
     }
@@ -108,7 +114,7 @@ void respond(char *requestBody, char response[64], int *sock, fd_set *master){
     return;
 }
 
-void handleConnection(int *clientServerSocket, fd_set *master) {
+void handleConnection(int *clientServerSocket, fd_set *master, struct timeval socketTime) {
     int responseSize = sizeof(char) * 64;
     int requestSize = sizeof(char) * 128;
     printf("DEBUG: handling connection\n");
@@ -132,7 +138,7 @@ void handleConnection(int *clientServerSocket, fd_set *master) {
         return;
     }
 
-    respond(requestBody, response, clientServerSocket, master);
+    respond(requestBody, response, clientServerSocket, master, socketTime);
     close(*clientServerSocket);
     FD_CLR(*clientServerSocket, master);
 }
@@ -220,11 +226,12 @@ int main(int argc, char** argv)
     /* keep track of the biggest file descriptor */
     fdmax = serverSocket; /* so far, it's this one*/
     
-    // setting timeout to 5s
-    // struct timeval timeout;
-    // timeout.tv_sec = 5;
-    // // creating a hashtable for each socket connection time
-    // struct timeval connectionTime[10];
+    // setting timeout to 5min
+    struct timeval timeout;
+    timeout.tv_sec = 5*60;
+    timeout.tv_usec = 0;
+    // creating a hashtable for each socket connection time
+    struct timeval connectionTime[10];
 
 
     while (1)
@@ -232,7 +239,7 @@ int main(int argc, char** argv)
         // copy
         read_fds = master;
 
-        if (select (fdmax+1, &read_fds, NULL, NULL, NULL) == -1)
+        if (select (fdmax+1, &read_fds, NULL, NULL, &timeout) == -1)
         {
           perror("Select()");
           exit(5);
@@ -260,16 +267,9 @@ int main(int argc, char** argv)
                     printf("%s: New connection from %s on socket %d\n", argv[0], inet_ntoa(client_addr.sin_addr), clientServerSocket);
                 }
                 else {
-                    printf("New Connection!Handling...\n");
                     // talk to client
-                    // timeout configuration
-                    // struct timeval shouldStop; gettimeofday(&shouldStop, NULL);
-                    // if (shouldStop.tv_sec - connectionTime[i].tv_sec > 5){
-                    //     close(i);
-                    //     continue;
-                    // }
-                    // do wathever we do with connections
-                    handleConnection(&i, &master);
+                    gettimeofday(&connectionTime[i], NULL);
+                    handleConnection(&i, &master, connectionTime[i]);
                 }
             }
         }
